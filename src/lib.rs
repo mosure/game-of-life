@@ -1,17 +1,30 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
+    Performance,
     WebGl2RenderingContext,
     WebGlProgram,
-    WebGlShader
+    WebGlShader,
+    WebGlUniformLocation,
 };
 
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
-    let document = web_sys::window().unwrap().document().unwrap();
+    let window = web_sys::window().expect("should have a window in this context");
+    let document = window.document().expect("should have a document in this context");
     let canvas = document.get_element_by_id("canvas").unwrap();
     let canvas: web_sys::HtmlCanvasElement = canvas.dyn_into::<web_sys::HtmlCanvasElement>()?;
     let body = document.body().unwrap().dyn_into::<web_sys::HtmlBodyElement>()?;
+
+    let performance = window
+        .performance()
+        .expect("performance should be available");
+
+    let boot_time = perf_to_system(performance.now());
 
     canvas.set_width(body.client_width() as u32);
     canvas.set_height(body.client_height() as u32);
@@ -35,7 +48,16 @@ pub fn start() -> Result<(), JsValue> {
     let program = link_program(&context, &vert_shader, &frag_shader)?;
     context.use_program(Some(&program));
 
-    let vertices: [f32; 9] = [-0.7, -0.7, 0.0, 0.7, -0.7, 0.0, 0.0, 0.7, 0.0];
+    let vertices: [f32; 18] = [
+        -1.0, -1.0, 0.0,
+        -1.0, 1.0, 0.0,
+        1.0, 1.0, 0.0,
+
+        1.0, 1.0, 0.0,
+        1.0, -1.0, 0.0,
+        -1.0, -1.0, 0.0,
+    ];
+    let vert_count = (vertices.len() / 3) as i32;
 
     let position_attribute_location = context.get_attrib_location(&program, "position");
     let buffer = context.create_buffer().ok_or("Failed to create buffer")?;
@@ -69,17 +91,61 @@ pub fn start() -> Result<(), JsValue> {
 
     context.bind_vertex_array(Some(&vao));
 
-    let vert_count = (vertices.len() / 3) as i32;
-    draw(&context, vert_count);
+    let f = Rc::new(RefCell::new(None));
+    let g = f.clone();
+
+    let mut frame = 0;
+    *g.borrow_mut() = Some(Closure::wrap(Box::new(move || {
+        context.clear_color(0.0, 0.0, 0.0, 1.0);
+        context.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT);
+
+        set_uniforms(
+            &context,
+            &body,
+            &performance,
+            &program,
+        );
+
+        context.draw_arrays(
+            WebGl2RenderingContext::TRIANGLES,
+            0,
+            vert_count
+        );
+
+        frame += 1;
+
+        request_animation_frame(f.borrow().as_ref().unwrap());
+    }) as Box<dyn FnMut()>));
+
+    request_animation_frame(g.borrow().as_ref().unwrap());
 
     Ok(())
 }
 
-fn draw(context: &WebGl2RenderingContext, vert_count: i32) {
-    context.clear_color(0.0, 0.0, 0.0, 1.0);
-    context.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT);
+fn set_uniforms(
+    context: &WebGl2RenderingContext,
+    body: &web_sys::HtmlBodyElement,
+    performance: &Performance,
+    program: &WebGlProgram,
+) {
+    let u_resolution = context.get_uniform_location(&program, "u_resolution");
+    let u_time = context.get_uniform_location(&program, "u_time");
 
-    context.draw_arrays(WebGl2RenderingContext::TRIANGLES, 0, vert_count);
+    let mut u_res_val = [body.client_width() as f32, body.client_height() as f32];
+    context.uniform2fv_with_f32_array(u_resolution.as_ref(), &mut u_res_val);
+
+    let start = perf_to_system(performance.now());
+    let since_the_epoch = start
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards");
+
+    context.uniform1f(u_time.as_ref(), since_the_epoch.as_secs_f32());
+}
+
+fn request_animation_frame(f: &Closure<dyn FnMut()>) {
+    web_sys::window().expect("no global `window` exists")
+        .request_animation_frame(f.as_ref().unchecked_ref())
+        .expect("should register `requestAnimationFrame` OK");
 }
 
 pub fn compile_shader(
@@ -130,4 +196,10 @@ pub fn link_program(
             .get_program_info_log(&program)
             .unwrap_or_else(|| String::from("Unknown error creating program object")))
     }
+}
+
+fn perf_to_system(amt: f64) -> SystemTime {
+    let secs = (amt as u64) / 1_000;
+    let nanos = (((amt as u64) % 1_000) as u32) * 1_000_000;
+    UNIX_EPOCH + Duration::new(secs, nanos)
 }

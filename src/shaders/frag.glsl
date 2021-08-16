@@ -1,8 +1,14 @@
 #version 300 es
-
 precision highp float;
+
+uniform vec2 u_resolution;
+uniform float u_time;
+
 out vec4 outColor;
 
+
 void main() {
-    outColor = vec4(0.7922, 0.1255, 0.1255, 1.0);
+    vec2 st = gl_FragCoord.xy / u_resolution;
+
+    outColor = vec4(abs(sin(u_time)), sin(st.x), sin(st.y), 1.0);
 }
