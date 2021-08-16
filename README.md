@@ -1,8 +1,10 @@
 # rust-template
 Rust template repository
 
-## Build
-`cargo build`
+## Dependencies
+[wasm-pack](https://rustwasm.github.io/wasm-pack/installer/)
 
-## Run
-`cargo run`
+## Development
+`npm run build`
+
+`npm start`
