@@ -1,19 +1,17 @@
-use rand::Rng;
 use std::cell::RefCell;
-use std::option::Option;
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+extern crate console_error_panic_hook;
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
-    Performance,
     WebGl2RenderingContext,
     WebGlFramebuffer,
     WebGlProgram,
     WebGlShader,
     WebGlTexture,
-    WebGlUniformLocation,
 };
 
 
@@ -27,7 +25,7 @@ fn window() -> web_sys::Window {
     return web_sys::window().expect("should have a window in this context");
 }
 
-fn document() -> web_sys::HtmlDocument {
+fn document() -> web_sys::Document {
     return window().document().expect("should have a document in this context");
 }
 
@@ -35,11 +33,16 @@ fn canvas() -> web_sys::HtmlCanvasElement {
     return document()
         .get_element_by_id("canvas")
         .unwrap()
-        .dyn_into::<web_sys::HtmlCanvasElement>();
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .expect("should have a canvas in this context");
 }
 
 fn body() -> web_sys::HtmlBodyElement {
-    return document().body().unwrap().dyn_into::<web_sys::HtmlBodyElement>();
+    return document()
+        .body()
+        .unwrap()
+        .dyn_into::<web_sys::HtmlBodyElement>()
+        .expect("should have a body in this context");
 }
 
 fn performance() -> web_sys::Performance {
@@ -52,9 +55,9 @@ fn set_canvas_dimensions(width: u32, height: u32) {
 }
 
 struct AppContext {
-    width: u32;
-    height: u32;
-    boot_time: SystemTime;
+    width: u32,
+    height: u32,
+    boot_time: SystemTime,
 }
 
 trait Stage {
@@ -63,28 +66,26 @@ trait Stage {
 }
 
 struct DrawStage {
-    gl: &WebGl2RenderingContext;
-    program: &WebGlProgram;
-    vert_count: u32;
-    vertices: [f32; 18];
+    gl: Rc<WebGl2RenderingContext>,
+    program: Rc<WebGlProgram>,
+    vert_count: u32,
+    vertices: [f32; 18],
 }
 
 struct ComputeStage {
-    gl: &WebGl2RenderingContext;
-    ctx: &AppContext;
-    frag_shader: WebGlShader;
-    vert_shader: WebGlShader;
-    program: WebGlProgram;
-    framebuffer: WebGlFramebuffer;
-    state: WebGlTexture;
-    draw_stage: DrawStage;
+    gl: Rc<WebGl2RenderingContext>,
+    ctx: Rc<AppContext>,
+    program: Rc<WebGlProgram>,
+    framebuffer: WebGlFramebuffer,
+    state: WebGlTexture,
+    draw_stage: DrawStage,
 }
 
-impl Stage for DrawStage {
-    fn new(
-        gl: &WebGl2RenderingContext,
-        program: &WebGlProgram,
-    ) -> Self {
+impl DrawStage {
+    pub fn new(
+        gl: Rc<WebGl2RenderingContext>,
+        program: Rc<WebGlProgram>,
+    ) -> DrawStage {
         let vertices: [f32; 18] = [
             -1.0, -1.0, 0.0,
             -1.0, 1.0, 0.0,
@@ -95,17 +96,20 @@ impl Stage for DrawStage {
             -1.0, -1.0, 0.0,
         ];
 
-        DrawStage {
-            gl: &gl,
-            program: &program,
+        return DrawStage {
+            gl: gl,
+            program: program,
             vertices: vertices,
+            vert_count: (vertices.len() / 3) as u32,
         };
     }
+}
 
+impl Stage for DrawStage {
     fn init(&mut self) -> () {
-        let position_attribute_location = gl.get_attrib_location(&program, "position");
-        let buffer = gl.create_buffer().ok_or("Failed to create buffer")?;
-        gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, Some(&buffer));
+        let position_attribute_location = self.gl.get_attrib_location(&self.program, "position");
+        let buffer = self.gl.create_buffer();
+        self.gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, buffer.as_ref());
 
         // Note that `Float32Array::view` is somewhat dangerous (hence the
         // `unsafe`!). This is creating a raw view into our module's
@@ -116,148 +120,189 @@ impl Stage for DrawStage {
         // As a result, after `Float32Array::view` we have to be very careful not to
         // do any memory allocations before it's dropped.
         unsafe {
-            let positions_array_buf_view = js_sys::Float32Array::view(&vertices);
+            let positions_array_buf_view = js_sys::Float32Array::view(&self.vertices);
 
-            gl.buffer_data_with_array_buffer_view(
+            self.gl.buffer_data_with_array_buffer_view(
                 WebGl2RenderingContext::ARRAY_BUFFER,
                 &positions_array_buf_view,
                 WebGl2RenderingContext::STATIC_DRAW,
             );
         }
 
-        let vao = gl.create_vertex_array().ok_or("Could not create vertex array object")?;
-        gl.bind_vertex_array(Some(&vao));
+        let vao = self.gl.create_vertex_array().expect("should have a vertex array object");
+        self.gl.bind_vertex_array(Some(&vao));
 
-        gl.vertex_attrib_pointer_with_i32(0, 3, WebGl2RenderingContext::FLOAT, false, 0, 0);
-        gl.enable_vertex_attrib_array(position_attribute_location as u32);
+        self.gl.vertex_attrib_pointer_with_i32(0, 3, WebGl2RenderingContext::FLOAT, false, 0, 0);
+        self.gl.enable_vertex_attrib_array(position_attribute_location as u32);
 
-        gl.bind_vertex_array(Some(&vao));
+        self.gl.bind_vertex_array(Some(&vao));
     }
 
     fn render(&mut self) -> () {
-        gl.clear_color(0.0, 0.0, 0.0, 1.0);
-        gl.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT | GL::DEPTH_BUFFER_BIT);
+        self.gl.clear_color(1.0, 0.0, 0.0, 1.0);
+        self.gl.clear(
+            WebGl2RenderingContext::COLOR_BUFFER_BIT |
+            WebGl2RenderingContext::DEPTH_BUFFER_BIT
+        );
 
-        gl.draw_arrays(
+        self.gl.draw_arrays(
             WebGl2RenderingContext::TRIANGLES,
             0,
-            vert_count
+            self.vert_count as i32
         );
     }
-};
+}
 
-impl Stage for ComputeStage {
+impl ComputeStage {
     fn new(
-        gl: &WebGl2RenderingContext,
-        ctx: &AppContext,
-    ) -> Self {
-        ComputeStage {
-            gl: &gl,
-            ctx: &ctx,
-            frag_shader: compile_shader(
+        gl: Rc<WebGl2RenderingContext>,
+        ctx: Rc<AppContext>,
+    ) -> ComputeStage {
+        let vert_shader = compile_shader(
+            &gl,
+            WebGl2RenderingContext::VERTEX_SHADER,
+            include_str!("shaders/vert.glsl"),
+        ).expect("expect vertex shader");
+
+        let frag_shader = compile_shader(
+            &gl,
+            WebGl2RenderingContext::FRAGMENT_SHADER,
+            include_str!("shaders/frag.glsl"),
+        ).expect("expect frag shader");
+
+        let program = Rc::new(
+            link_program(
                 &gl,
-                WebGl2RenderingContext::FRAGMENT_SHADER,
-                include_str!("shaders/frag.glsl"),
-            ),
-            vert_shader: compile_shader(
-                &gl,
-                WebGl2RenderingContext::VERTEX_SHADER,
-                include_str!("shaders/vert.glsl"),
-            ),
-            program: link_program(&gl, &vert_shader, &frag_shader),
-            framebuffer: gl.create_framebuffer(),
-            state: gl.create_texture(),
-            draw_stage: DrawStage::new(&gl, &program),
+                &vert_shader,
+                &frag_shader
+            ).expect("expect linked program")
+        );
+
+        let framebuffer = gl.create_framebuffer().expect("should have a framebuffer");
+        let state = gl.create_texture().expect("should have a texture");
+
+        let draw_stage = DrawStage::new(
+            Rc::clone(&gl),
+            Rc::clone(&program),
+        );
+
+        return ComputeStage {
+            gl: gl,
+            ctx: ctx,
+            program: program,
+            framebuffer: framebuffer,
+            state: state,
+            draw_stage: draw_stage,
         };
     }
+}
 
+impl Stage for ComputeStage {
     fn init(&mut self) {
-        gl.use_program(Some(&program));
+        self.draw_stage.init();
 
-        gl.viewport(0, 0, ctx.width as i32, ctx.height as i32);
+        self.gl.use_program(Some(&self.program));
 
-        gl.bind_framebuffer(
-            WebGl2RenderingContext::FRAMEBUFFER,
-            framebuffer.as_ref()
-        );
+        self.gl.viewport(0, 0, self.ctx.width as i32, self.ctx.height as i32);
 
-        gl.active_texture(
+        // self.gl.bind_framebuffer(
+        //     WebGl2RenderingContext::FRAMEBUFFER,
+        //     Some(&self.framebuffer)
+        // );
+
+        self.gl.active_texture(
             WebGl2RenderingContext::TEXTURE0,
         );
 
-        gl.bind_texture(
+        self.gl.bind_texture(
             WebGl2RenderingContext::TEXTURE_2D,
-            state.as_ref()
+            Some(&self.state)
         );
 
-        gl.tex_parameteri(
+        self.gl.tex_parameteri(
             WebGl2RenderingContext::TEXTURE_2D,
             WebGl2RenderingContext::TEXTURE_MAG_FILTER,
             WebGl2RenderingContext::LINEAR as i32
         );
-        gl.tex_parameteri(
+        self.gl.tex_parameteri(
             WebGl2RenderingContext::TEXTURE_2D,
             WebGl2RenderingContext::TEXTURE_MIN_FILTER,
             WebGl2RenderingContext::LINEAR as i32
         );
 
-        gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
+        self.gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
             WebGl2RenderingContext::TEXTURE_2D,
             0,
             WebGl2RenderingContext::RGBA as i32,
-            width as i32,
-            height as i32,
+            self.ctx.width as i32,
+            self.ctx.height as i32,
             0,
             WebGl2RenderingContext::RGBA as u32,
             WebGl2RenderingContext::UNSIGNED_BYTE,
             None,
-        );
+        ).expect("expect tex image 2d result");
 
-        gl.framebuffer_texture_2d(
+        self.gl.framebuffer_texture_2d(
             WebGl2RenderingContext::FRAMEBUFFER,
             WebGl2RenderingContext::COLOR_ATTACHMENT1,
             WebGl2RenderingContext::TEXTURE_2D,
-            state_texture.as_ref(),
+            Some(&self.state),
             0,
         );
     }
 
     fn render(&mut self) {
-        let u_resolution = gl.get_uniform_location(&program, "u_resolution");
-        let u_time = gl.get_uniform_location(&program, "u_time");
+        // self.gl.bind_framebuffer(
+        //     WebGl2RenderingContext::FRAMEBUFFER,
+        //     Some(&self.framebuffer)
+        // );
 
-        let mut u_res_val = [width as f32, height as f32];
-        gl.uniform2fv_with_f32_array(u_resolution.as_ref(), &mut u_res_val);
+        let u_resolution = self.gl.get_uniform_location(&self.program, "u_resolution");
+        let u_time = self.gl.get_uniform_location(&self.program, "u_time");
 
-        let start = perf_to_system(performance.now());
+        let mut u_res_val = [self.ctx.width as f32, self.ctx.height as f32];
+        self.gl.uniform2fv_with_f32_array(u_resolution.as_ref(), &mut u_res_val);
+
+        let start = perf_to_system(performance().now());
         let since_the_epoch = start
-            .duration_since(UNIX_EPOCH)
+            .duration_since(self.ctx.boot_time)
             .expect("Time went backwards");
 
-        gl.uniform1f(u_time.as_ref(), since_the_epoch.as_secs_f32());
+        self.gl.uniform1f(u_time.as_ref(), since_the_epoch.as_secs_f32());
 
-        draw_stage.render();
+        self.draw_stage.render();
+
+        // self.gl.bind_framebuffer(
+        //     WebGl2RenderingContext::FRAMEBUFFER,
+        //     None
+        // );
     }
 }
 
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
-    let gl = canvas()
-        .get_context("webgl2")?
-        .unwrap()
-        .dyn_into::<WebGl2RenderingContext>()?;
+    console_error_panic_hook::set_once();
 
-    let ctx = AppContext {
-        width: body().client_width() as u32,
-        height: body().client_height() as u32,
-        boot_time: perf_to_system(performance.now()),
-    };
+    let gl = Rc::new(
+        canvas()
+            .get_context("webgl2")?
+            .unwrap()
+            .dyn_into::<WebGl2RenderingContext>()?
+    );
+
+    let ctx = Rc::new(
+        AppContext {
+            width: body().client_width() as u32,
+            height: body().client_height() as u32,
+            boot_time: perf_to_system(performance().now()),
+        }
+    );
 
     set_canvas_dimensions(ctx.width, ctx.height);
 
-    let compute_stage = ComputeStage::new(
-        &gl,
-        &ctx,
+    let mut compute_stage = ComputeStage::new(
+        Rc::clone(&gl),
+        Rc::clone(&ctx),
     );
     compute_stage.init();
 

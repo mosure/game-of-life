@@ -4,8 +4,7 @@ precision highp float;
 uniform vec2 u_resolution;
 uniform float u_time;
 
-out vec4 outColor0;
-out vec4 outColor1;
+out vec4 outColor;
 
 
 void main() {
