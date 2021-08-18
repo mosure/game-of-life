@@ -11,7 +11,7 @@ mod pipeline;
 use pipeline::{AppContext, Stage};
 
 mod stages;
-use stages::ComputeStage;
+use stages::RenderStage;
 
 mod web_util;
 use web_util::{
@@ -45,7 +45,7 @@ pub fn start() -> Result<(), JsValue> {
 
     set_canvas_dimensions(ctx.width, ctx.height);
 
-    let mut compute_stage = ComputeStage::new(
+    let mut compute_stage = RenderStage::new(
         gl,
         ctx,
     );

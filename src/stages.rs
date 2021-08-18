@@ -24,7 +24,17 @@ pub struct ComputeStage {
     ctx: Rc<AppContext>,
     program: Rc<WebGlProgram>,
     framebuffer: WebGlFramebuffer,
-    pub state: WebGlTexture,
+    transfer_buffer: WebGlFramebuffer,
+    pub in_state: WebGlTexture,
+    pub out_state: WebGlTexture,
+    draw_stage: DrawStage,
+}
+
+pub struct RenderStage {
+    gl: Rc<WebGl2RenderingContext>,
+    ctx: Rc<AppContext>,
+    program: Rc<WebGlProgram>,
+    compute_stage: ComputeStage,
     draw_stage: DrawStage,
 }
 
@@ -129,7 +139,9 @@ impl ComputeStage {
         );
 
         let framebuffer = gl.create_framebuffer().expect("should have a framebuffer");
-        let state = gl.create_texture().expect("should have a texture");
+        let transfer_buffer = gl.create_framebuffer().expect("should have a framebuffer");
+        let in_state = gl.create_texture().expect("should have a texture");
+        let out_state = gl.create_texture().expect("should have a texture");
 
         let draw_stage = DrawStage::new(
             Rc::clone(&gl),
@@ -141,7 +153,9 @@ impl ComputeStage {
             ctx: ctx,
             program: program,
             framebuffer: framebuffer,
-            state: state,
+            transfer_buffer: transfer_buffer,
+            in_state: in_state,
+            out_state: out_state,
             draw_stage: draw_stage,
         };
         stage.init();
@@ -150,65 +164,247 @@ impl ComputeStage {
     }
 
     fn init(&mut self) {
-        self.draw_stage.init();
-
         self.gl.use_program(Some(&self.program));
 
         self.gl.viewport(0, 0, self.ctx.width as i32, self.ctx.height as i32);
 
-        // self.gl.bind_framebuffer(
-        //     WebGl2RenderingContext::FRAMEBUFFER,
-        //     Some(&self.framebuffer)
-        // );
+        {
+            self.gl.bind_framebuffer(
+                WebGl2RenderingContext::FRAMEBUFFER,
+                Some(&self.transfer_buffer)
+            );
 
-        self.gl.active_texture(
-            WebGl2RenderingContext::TEXTURE0,
+            self.gl.active_texture(
+                WebGl2RenderingContext::TEXTURE0,
+            );
+
+            self.gl.bind_texture(
+                WebGl2RenderingContext::TEXTURE_2D,
+                Some(&self.in_state)
+            );
+
+            self.gl.tex_parameteri(
+                WebGl2RenderingContext::TEXTURE_2D,
+                WebGl2RenderingContext::TEXTURE_MAG_FILTER,
+                WebGl2RenderingContext::NEAREST as i32
+            );
+            self.gl.tex_parameteri(
+                WebGl2RenderingContext::TEXTURE_2D,
+                WebGl2RenderingContext::TEXTURE_MIN_FILTER,
+                WebGl2RenderingContext::NEAREST as i32
+            );
+
+            self.gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
+                WebGl2RenderingContext::TEXTURE_2D,
+                0,
+                WebGl2RenderingContext::RGBA as i32,
+                self.ctx.width as i32,
+                self.ctx.height as i32,
+                0,
+                WebGl2RenderingContext::RGBA as u32,
+                WebGl2RenderingContext::UNSIGNED_BYTE,
+                None,
+            ).expect("expect tex image 2d result");
+
+            self.gl.framebuffer_texture_2d(
+                WebGl2RenderingContext::FRAMEBUFFER,
+                WebGl2RenderingContext::COLOR_ATTACHMENT0,
+                WebGl2RenderingContext::TEXTURE_2D,
+                Some(&self.in_state),
+                0,
+            );
+        }
+
+        {
+            self.gl.bind_framebuffer(
+                WebGl2RenderingContext::FRAMEBUFFER,
+                Some(&self.framebuffer)
+            );
+
+            self.gl.active_texture(
+                WebGl2RenderingContext::TEXTURE1,
+            );
+
+            self.gl.bind_texture(
+                WebGl2RenderingContext::TEXTURE_2D,
+                Some(&self.out_state)
+            );
+
+            self.gl.tex_parameteri(
+                WebGl2RenderingContext::TEXTURE_2D,
+                WebGl2RenderingContext::TEXTURE_MAG_FILTER,
+                WebGl2RenderingContext::NEAREST as i32
+            );
+            self.gl.tex_parameteri(
+                WebGl2RenderingContext::TEXTURE_2D,
+                WebGl2RenderingContext::TEXTURE_MIN_FILTER,
+                WebGl2RenderingContext::NEAREST as i32
+            );
+
+            self.gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
+                WebGl2RenderingContext::TEXTURE_2D,
+                0,
+                WebGl2RenderingContext::RGBA as i32,
+                self.ctx.width as i32,
+                self.ctx.height as i32,
+                0,
+                WebGl2RenderingContext::RGBA as u32,
+                WebGl2RenderingContext::UNSIGNED_BYTE,
+                None,
+            ).expect("expect tex image 2d result");
+
+            self.gl.framebuffer_texture_2d(
+                WebGl2RenderingContext::FRAMEBUFFER,
+                WebGl2RenderingContext::COLOR_ATTACHMENT0,
+                WebGl2RenderingContext::TEXTURE_2D,
+                Some(&self.out_state),
+                0,
+            );
+        }
+
+        self.gl.bind_framebuffer(
+            WebGl2RenderingContext::FRAMEBUFFER,
+            None
+        );
+    }
+
+    pub fn transfer_texture(&mut self) {
+        self.gl.finish();
+
+        self.gl.bind_framebuffer(
+            WebGl2RenderingContext::READ_FRAMEBUFFER,
+            Some(&self.framebuffer)
         );
 
-        self.gl.bind_texture(
-            WebGl2RenderingContext::TEXTURE_2D,
-            Some(&self.state)
+        self.gl.bind_framebuffer(
+            WebGl2RenderingContext::DRAW_FRAMEBUFFER,
+            Some(&self.transfer_buffer)
         );
 
-        self.gl.tex_parameteri(
-            WebGl2RenderingContext::TEXTURE_2D,
-            WebGl2RenderingContext::TEXTURE_MAG_FILTER,
-            WebGl2RenderingContext::LINEAR as i32
-        );
-        self.gl.tex_parameteri(
-            WebGl2RenderingContext::TEXTURE_2D,
-            WebGl2RenderingContext::TEXTURE_MIN_FILTER,
-            WebGl2RenderingContext::LINEAR as i32
-        );
-
-        self.gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
-            WebGl2RenderingContext::TEXTURE_2D,
+        self.gl.blit_framebuffer(
             0,
-            WebGl2RenderingContext::RGBA as i32,
+            0,
             self.ctx.width as i32,
             self.ctx.height as i32,
             0,
-            WebGl2RenderingContext::RGBA as u32,
-            WebGl2RenderingContext::UNSIGNED_BYTE,
-            None,
-        ).expect("expect tex image 2d result");
-
-        self.gl.framebuffer_texture_2d(
-            WebGl2RenderingContext::FRAMEBUFFER,
-            WebGl2RenderingContext::COLOR_ATTACHMENT1,
-            WebGl2RenderingContext::TEXTURE_2D,
-            Some(&self.state),
             0,
+            self.ctx.width as i32,
+            self.ctx.height as i32,
+            WebGl2RenderingContext::COLOR_BUFFER_BIT,
+            WebGl2RenderingContext::NEAREST,
+        );
+
+        self.gl.bind_framebuffer(
+            WebGl2RenderingContext::READ_FRAMEBUFFER,
+            None
+        );
+
+        self.gl.bind_framebuffer(
+            WebGl2RenderingContext::DRAW_FRAMEBUFFER,
+            None
         );
     }
 }
 
 impl Stage for ComputeStage {
     fn render(&mut self) {
-        // self.gl.bind_framebuffer(
-        //     WebGl2RenderingContext::FRAMEBUFFER,
-        //     Some(&self.framebuffer)
-        // );
+        self.gl.use_program(Some(&self.program));
+
+        self.gl.active_texture(
+            WebGl2RenderingContext::TEXTURE0,
+        );
+
+        self.gl.bind_framebuffer(
+            WebGl2RenderingContext::FRAMEBUFFER,
+            Some(&self.framebuffer)
+        );
+
+        let u_resolution = self.gl.get_uniform_location(&self.program, "u_resolution");
+        let u_time = self.gl.get_uniform_location(&self.program, "u_time");
+
+        let mut u_res_val = [self.ctx.width as f32, self.ctx.height as f32];
+        self.gl.uniform2fv_with_f32_array(u_resolution.as_ref(), &mut u_res_val);
+
+        let start = perf_to_system(performance().now());
+        let since_the_epoch = start
+            .duration_since(self.ctx.boot_time)
+            .expect("Time went backwards");
+        self.gl.uniform1f(u_time.as_ref(), since_the_epoch.as_secs_f32());
+
+        self.draw_stage.render();
+
+        self.gl.bind_framebuffer(
+            WebGl2RenderingContext::FRAMEBUFFER,
+            None
+        );
+
+        self.transfer_texture();
+    }
+}
+
+impl RenderStage {
+    pub fn new(
+        gl: Rc<WebGl2RenderingContext>,
+        ctx: Rc<AppContext>,
+    ) -> RenderStage {
+        let vert_shader = compile_shader(
+            &gl,
+            WebGl2RenderingContext::VERTEX_SHADER,
+            include_str!("shaders/render/vert.glsl"),
+        ).expect("expect vertex shader");
+
+        let frag_shader = compile_shader(
+            &gl,
+            WebGl2RenderingContext::FRAGMENT_SHADER,
+            include_str!("shaders/render/frag.glsl"),
+        ).expect("expect frag shader");
+
+        let program = Rc::new(
+            link_program(
+                &gl,
+                &vert_shader,
+                &frag_shader
+            ).expect("expect linked program")
+        );
+
+        let compute_stage = ComputeStage::new(
+            Rc::clone(&gl),
+            Rc::clone(&ctx),
+        );
+
+        let draw_stage = DrawStage::new(
+            Rc::clone(&gl),
+            Rc::clone(&program),
+        );
+
+        let mut stage = RenderStage {
+            gl: gl,
+            ctx: ctx,
+            program: program,
+            compute_stage: compute_stage,
+            draw_stage: draw_stage,
+        };
+        stage.init();
+
+        return stage;
+    }
+
+    fn init(&mut self) {
+        self.gl.use_program(Some(&self.program));
+
+        self.gl.viewport(0, 0, self.ctx.width as i32, self.ctx.height as i32);
+    }
+}
+
+impl Stage for RenderStage {
+    fn render(&mut self) {
+        self.compute_stage.render();
+
+        self.gl.use_program(Some(&self.program));
+
+        self.gl.active_texture(
+            WebGl2RenderingContext::TEXTURE0,
+        );
 
         let u_resolution = self.gl.get_uniform_location(&self.program, "u_resolution");
         let u_time = self.gl.get_uniform_location(&self.program, "u_time");
@@ -225,12 +421,13 @@ impl Stage for ComputeStage {
 
         self.draw_stage.render();
 
-        // self.gl.bind_framebuffer(
-        //     WebGl2RenderingContext::FRAMEBUFFER,
-        //     None
-        // );
+        self.gl.flush();
     }
 }
+
+
+
+// ---------- Util functions -------------
 
 
 // Shared stage functions
