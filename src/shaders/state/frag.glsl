@@ -3,8 +3,8 @@ precision highp float;
 
 #define PI                  3.14159265359
 #define RESET_TIME_SECONDS  0.5
-#define PIXELS_PER_CELL     1
-#define FPS                 60.0
+#define PIXELS_PER_CELL     25
+#define FPS                 10.0
 
 uniform int         u_frame;
 uniform vec2        u_resolution;
@@ -44,37 +44,37 @@ float noise(in vec2 st) {
             (d - b) * u.x * u.y;
 }
 
-vec4 get_cell_at(vec2 coords) {
-    vec2 lookup_coords = mod(coords + u_resolution, u_resolution);
+vec4 get_cell_at(ivec2 coords) {
+    vec2 lookup_coords = mod(vec2(coords) * vec2(PIXELS_PER_CELL), u_resolution);
 
-    return texture(u_state, coords / u_resolution);
+    return texture(u_state, lookup_coords / u_resolution + 1.0 / (u_resolution * 10.0));
 }
 
-bool is_coord_alive(vec2 coords) {
+bool is_coord_alive(ivec2 coords) {
     return get_cell_at(coords).a == 1.0;
 }
 
-vec2 get_mapped_coords(vec2 coords) {
-    return coords / vec2(PIXELS_PER_CELL);
+ivec2 get_mapped_coords(vec2 coords) {
+    return ivec2(coords) / ivec2(PIXELS_PER_CELL);
 }
 
-int get_neighbor_count(vec2 coords) {
+int get_neighbor_count(ivec2 coords) {
     int count = 0;
 
-    count += int(is_coord_alive(coords + vec2(-1, -1) * vec2(PIXELS_PER_CELL)));
-    count += int(is_coord_alive(coords + vec2(0, -1) * vec2(PIXELS_PER_CELL)));
-    count += int(is_coord_alive(coords + vec2(1, -1) * vec2(PIXELS_PER_CELL)));
-    count += int(is_coord_alive(coords + vec2(-1, 0) * vec2(PIXELS_PER_CELL)));
-    count += int(is_coord_alive(coords + vec2(1, 0) * vec2(PIXELS_PER_CELL)));
-    count += int(is_coord_alive(coords + vec2(-1, 1) * vec2(PIXELS_PER_CELL)));
-    count += int(is_coord_alive(coords + vec2(0, 1) * vec2(PIXELS_PER_CELL)));
-    count += int(is_coord_alive(coords + vec2(1, 1) * vec2(PIXELS_PER_CELL)));
+    count += int(is_coord_alive(coords + ivec2(-1, -1)));
+    count += int(is_coord_alive(coords + ivec2(0, -1)));
+    count += int(is_coord_alive(coords + ivec2(1, -1)));
+    count += int(is_coord_alive(coords + ivec2(-1, 0)));
+    count += int(is_coord_alive(coords + ivec2(1, 0)));
+    count += int(is_coord_alive(coords + ivec2(-1, 1)));
+    count += int(is_coord_alive(coords + ivec2(0, 1)));
+    count += int(is_coord_alive(coords + ivec2(1, 1)));
 
     return count;
 }
 
 bool should_live() {
-    vec2 mapped_coords = get_mapped_coords(gl_FragCoord.xy);
+    ivec2 mapped_coords = get_mapped_coords(gl_FragCoord.xy);
 
     if (u_frame % int(60.0 / FPS) != 0) {
         return is_coord_alive(mapped_coords);
