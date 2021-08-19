@@ -28,6 +28,7 @@ pub struct ComputeStage {
     pub in_state: WebGlTexture,
     pub out_state: WebGlTexture,
     draw_stage: DrawStage,
+    pub frame: u32,
 }
 
 pub struct RenderStage {
@@ -157,6 +158,7 @@ impl ComputeStage {
             in_state: in_state,
             out_state: out_state,
             draw_stage: draw_stage,
+            frame: 0,
         };
         stage.init();
 
@@ -319,8 +321,11 @@ impl Stage for ComputeStage {
             Some(&self.framebuffer)
         );
 
+        let u_frame = self.gl.get_uniform_location(&self.program, "u_frame");
         let u_resolution = self.gl.get_uniform_location(&self.program, "u_resolution");
         let u_time = self.gl.get_uniform_location(&self.program, "u_time");
+
+        self.gl.uniform1i(u_frame.as_ref(), self.frame as i32);
 
         let mut u_res_val = [self.ctx.width as f32, self.ctx.height as f32];
         self.gl.uniform2fv_with_f32_array(u_resolution.as_ref(), &mut u_res_val);
@@ -339,6 +344,8 @@ impl Stage for ComputeStage {
         );
 
         self.transfer_texture();
+
+        self.frame += 1;
     }
 }
 
